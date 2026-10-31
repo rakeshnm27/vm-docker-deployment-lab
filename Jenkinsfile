@@ -1,10 +1,13 @@
+```groovy
 pipeline {
     agent any
 
     stages {
+
         stage('Checkout') {
             steps {
                 checkout scm
+                echo 'GitHub source code checkout completed'
             }
         }
 
@@ -24,6 +27,7 @@ pipeline {
             steps {
                 sh '''
                     docker rm -f vm-docker-jenkins || true
+
                     docker run -d \
                       --name vm-docker-jenkins \
                       --restart unless-stopped \
@@ -35,8 +39,33 @@ pipeline {
 
         stage('Health Check') {
             steps {
-                sh 'curl -f http://localhost:5004/health'
+                sh '''
+                    for attempt in $(seq 1 10); do
+
+                        if curl -fsS http://127.0.0.1:5004/health; then
+                            echo "Health check passed"
+                            exit 0
+                        fi
+
+                        echo "Attempt $attempt failed. Retrying in 2 seconds..."
+                        sleep 2
+                    done
+
+                    echo "Application failed health check"
+                    exit 1
+                '''
             }
         }
     }
+
+    post {
+        success {
+            echo 'Deployment completed successfully!'
+        }
+
+        failure {
+            echo 'Pipeline failed. Check Console Output for details.'
+        }
+    }
 }
+```
