@@ -11,7 +11,7 @@ class AppHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"Welcome to VM Docker Deployment Lab! version 1.1")
+            self.wfile.write(b"Welcome to VM Docker Deployment Lab! version 1.2")
 
 server = HTTPServer(("0.0.0.0", 5000), AppHandler)
 
