@@ -1,0 +1,8 @@
+services:
+  vm-docker-app:
+    build: .
+    image: vm-docker-app:1.1
+    container_name: vm-docker-compose
+    ports:
+      - "5003:5000"
+    restart: unless-stopped
