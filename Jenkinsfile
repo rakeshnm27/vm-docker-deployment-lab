@@ -4,7 +4,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                echo 'Source code checkout completed'
+                checkout scm
             }
         }
 
@@ -22,13 +22,20 @@ pipeline {
 
         stage('Deploy Application') {
             steps {
-                sh 'docker compose up -d --build'
+                sh '''
+                    docker rm -f vm-docker-jenkins || true
+                    docker run -d \
+                      --name vm-docker-jenkins \
+                      --restart unless-stopped \
+                      -p 5004:5000 \
+                      vm-docker-app:1.2
+                '''
             }
         }
 
         stage('Health Check') {
             steps {
-                sh 'curl -f http://localhost:5003/health'
+                sh 'curl -f http://localhost:5004/health'
             }
         }
     }
