@@ -14,6 +14,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+                sh 'rm -f previous-image.txt'
             }
         }
 
@@ -28,9 +29,7 @@ pipeline {
 
         stage('Verify Docker Image') {
             steps {
-                sh '''
-                    docker images "$IMAGE_NAME"
-                '''
+                sh 'docker images "$IMAGE_NAME"'
             }
         }
 
@@ -76,6 +75,24 @@ pipeline {
                     docker push "$ECR_IMAGE"
 
                     echo "Pushed image: $ECR_IMAGE"
+                '''
+            }
+        }
+
+        stage('Capture Previous Deployment') {
+            steps {
+                sh '''
+                    if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+                        docker inspect \
+                          --format='{{.Config.Image}}' \
+                          "$CONTAINER_NAME" > previous-image.txt
+
+                        echo "Previous deployment image:"
+                        cat previous-image.txt
+                    else
+                        echo "No previous deployment found"
+                        echo "NONE" > previous-image.txt
+                    fi
                 '''
             }
         }
@@ -126,7 +143,48 @@ pipeline {
         }
 
         failure {
-            echo 'Pipeline failed. Check Console Output.'
+            echo 'Pipeline failed. Starting automatic rollback.'
+
+            sh '''
+                if [ ! -f previous-image.txt ]; then
+                    echo "No previous deployment information available."
+                    exit 0
+                fi
+
+                PREVIOUS_IMAGE=$(cat previous-image.txt)
+
+                if [ "$PREVIOUS_IMAGE" = "NONE" ] || [ -z "$PREVIOUS_IMAGE" ]; then
+                    echo "No previous image available for rollback."
+                    exit 0
+                fi
+
+                echo "Restoring previous image: $PREVIOUS_IMAGE"
+
+                docker pull "$PREVIOUS_IMAGE"
+
+                docker rm -f "$CONTAINER_NAME" || true
+
+                docker run -d \
+                  --name "$CONTAINER_NAME" \
+                  --restart unless-stopped \
+                  -p 5004:5000 \
+                  "$PREVIOUS_IMAGE"
+
+                echo "Checking rollback application health..."
+
+                for i in $(seq 1 10); do
+                    if curl -fsS http://127.0.0.1:5004/health; then
+                        echo "Rollback successful!"
+                        exit 0
+                    fi
+
+                    echo "Waiting for rollback application..."
+                    sleep 2
+                done
+
+                echo "CRITICAL: Rollback health check failed."
+                exit 1
+            '''
         }
     }
 }
