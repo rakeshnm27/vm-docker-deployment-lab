@@ -5,9 +5,9 @@ pipeline {
     environment {
         AWS_DEFAULT_REGION = 'ap-south-1'
         ECR_URI = '743702012398.dkr.ecr.ap-south-1.amazonaws.com/vm-docker-deployment-lab'
-        LOCAL_IMAGE = 'vm-docker-app:1.2'
-        ECR_IMAGE = '743702012398.dkr.ecr.ap-south-1.amazonaws.com/vm-docker-deployment-lab:1.2'
+        IMAGE_NAME = 'vm-docker-app'
         CONTAINER_NAME = 'vm-docker-jenkins'
+        IMAGE_TAG = "${BUILD_NUMBER}"
     }
 
     stages {
@@ -19,13 +19,18 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t $LOCAL_IMAGE .'
+                sh '''
+                    docker build -t "$IMAGE_NAME:$IMAGE_TAG" .
+                    echo "Built image: $IMAGE_NAME:$IMAGE_TAG"
+                '''
             }
         }
 
         stage('Verify Docker Image') {
             steps {
-                sh 'docker images vm-docker-app'
+                sh '''
+                    docker images "$IMAGE_NAME"
+                '''
             }
         }
 
@@ -65,11 +70,12 @@ pipeline {
         stage('Push Docker Image to ECR') {
             steps {
                 sh '''
-                    docker tag "$LOCAL_IMAGE" "$ECR_IMAGE"
+                    ECR_IMAGE="$ECR_URI:$IMAGE_TAG"
 
+                    docker tag "$IMAGE_NAME:$IMAGE_TAG" "$ECR_IMAGE"
                     docker push "$ECR_IMAGE"
 
-                    echo "Docker image pushed to Amazon ECR"
+                    echo "Pushed image: $ECR_IMAGE"
                 '''
             }
         }
@@ -77,6 +83,8 @@ pipeline {
         stage('Deploy Application from ECR') {
             steps {
                 sh '''
+                    ECR_IMAGE="$ECR_URI:$IMAGE_TAG"
+
                     docker pull "$ECR_IMAGE"
 
                     docker rm -f "$CONTAINER_NAME" || true
@@ -87,7 +95,7 @@ pipeline {
                       -p 5004:5000 \
                       "$ECR_IMAGE"
 
-                    echo "Application deployed from Amazon ECR"
+                    echo "Deployed image: $ECR_IMAGE"
                 '''
             }
         }
@@ -114,7 +122,7 @@ pipeline {
 
     post {
         success {
-            echo 'Deployment completed successfully!'
+            echo "Deployment successful. Image tag: ${BUILD_NUMBER}"
         }
 
         failure {
