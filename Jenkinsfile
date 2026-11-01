@@ -32,9 +32,9 @@ pipeline {
                         passwordVariable: 'AWS_SECRET_ACCESS_KEY'
                     )
                 ]) {
-                    sh '''
-                        set +x
-                        set -o pipefail
+                    sh '''#!/bin/bash
+   	       	        set +x
+   		        set -eo pipefail
 
                         export AWS_DEFAULT_REGION=ap-south-1
 
