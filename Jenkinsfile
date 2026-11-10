@@ -28,33 +28,31 @@ pipeline {
             }
         }
 
-        stage('Validate Tools and AWS Access') {
+        stage('Validate EC2 Jenkins Environment') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'aws-ecr-credentials',
-                        usernameVariable: 'AWS_ACCESS_KEY_ID',
-                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                    )
-                ]) {
-                    sh '''
-                        set -e
+                sh '''
+                    set -e
 
-                        command -v docker
-                        command -v aws
-                        command -v ssh
+                    echo "Jenkins execution host:"
+                    hostname
 
-                        echo "Checking AWS identity..."
-                        aws sts get-caller-identity
+                    echo "Jenkins user:"
+                    whoami
 
-                        echo "Checking ECR repository..."
-                        aws ecr describe-repositories \
-                            --repository-names "$ECR_REPOSITORY" \
-                            --region "$AWS_DEFAULT_REGION"
+                    echo "AWS identity:"
+                    aws sts get-caller-identity
 
-                        echo "AWS validation successful."
-                    '''
-                }
+                    docker --version
+                    aws --version
+                    ssh -V
+
+                    echo "Checking ECR repository..."
+                    aws ecr describe-repositories \
+                      --repository-names "$ECR_REPOSITORY" \
+                      --region "$AWS_DEFAULT_REGION"
+
+                    echo "Environment validation successful."
+                '''
             }
         }
 
@@ -62,123 +60,75 @@ pipeline {
             steps {
                 sh '''
                     set -e
-
                     docker build -t "$IMAGE_NAME:$IMAGE_TAG" .
-
-                    echo "Image built: $IMAGE_NAME:$IMAGE_TAG"
+                    echo "Docker build successful."
                 '''
             }
         }
 
         stage('Push Image to ECR') {
             steps {
+                sh '''
+                    set -e
+                    set +x
+
+                    ACCOUNT_ID=$(aws sts get-caller-identity \
+                      --query Account --output text)
+
+                    ECR_REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+                    ECR_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
+
+                    aws ecr get-login-password \
+                      --region "$AWS_DEFAULT_REGION" |
+                      docker login \
+                        --username AWS \
+                        --password-stdin "$ECR_REGISTRY"
+
+                    docker tag "$IMAGE_NAME:$IMAGE_TAG" "$ECR_URI:$IMAGE_TAG"
+                    docker push "$ECR_URI:$IMAGE_TAG"
+
+                    echo "Image pushed: $ECR_URI:$IMAGE_TAG"
+                '''
+            }
+        }
+
+        stage('Rolling Deployment') {
+            steps {
                 withCredentials([
-                    usernamePassword(
-                        credentialsId: 'aws-ecr-credentials',
-                        usernameVariable: 'AWS_ACCESS_KEY_ID',
-                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    sshUserPrivateKey(
+                        credentialsId: 'aws-ec2-ssh',
+                        keyFileVariable: 'SSH_KEY',
+                        usernameVariable: 'SSH_USER'
                     )
                 ]) {
                     sh '''
                         set -e
-                        set +x
 
                         ACCOUNT_ID=$(aws sts get-caller-identity \
-                            --query Account --output text)
+                          --query Account --output text)
 
                         ECR_REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
-                        ECR_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
+                        ECR_IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-                        aws ecr get-login-password \
-                            --region "$AWS_DEFAULT_REGION" |
-                            docker login \
-                                --username AWS \
-                                --password-stdin "$ECR_REGISTRY"
+                        TARGET_GROUP_ARN=$(aws elbv2 describe-target-groups \
+                          --names "$TARGET_GROUP_NAME" \
+                          --region "$AWS_DEFAULT_REGION" \
+                          --query 'TargetGroups[0].TargetGroupArn' \
+                          --output text)
 
-                        docker tag "$IMAGE_NAME:$IMAGE_TAG" "$ECR_URI:$IMAGE_TAG"
+                        export AWS_DEFAULT_REGION
+                        export ASG_NAME
+                        export TARGET_GROUP_ARN
+                        export ECR_REGISTRY
+                        export ECR_IMAGE
+                        export SSH_KEY
+                        export SSH_USER
 
-                        docker push "$ECR_URI:$IMAGE_TAG"
+                        chmod +x scripts/deploy.sh scripts/rollback.sh
 
-                        echo "Successfully pushed $ECR_URI:$IMAGE_TAG"
+                        echo "Starting rolling deployment..."
+                        bash ./scripts/deploy.sh
                     '''
-                }
-            }
-        }
-
-        stage('Rolling Deployment to ASG') {
-            steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'aws-ecr-credentials',
-                        usernameVariable: 'AWS_ACCESS_KEY_ID',
-                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                    )
-                ]) {
-                    withCredentials([
-                        sshUserPrivateKey(
-                            credentialsId: 'aws-ec2-ssh',
-                            keyFileVariable: 'SSH_KEY',
-                            usernameVariable: 'SSH_USER'
-                        )
-                    ]) {
-                        sh '''
-                            set -e
-
-                            echo "===== DEPLOYMENT AGENT DIAGNOSTICS ====="
-
-                            echo "Hostname:"
-                            hostname
-
-                            echo "Private IP addresses:"
-                            hostname -I
-
-                            echo "Jenkins execution user:"
-                            whoami
-
-                            echo "SSH key file availability:"
-                            if [ -r "$SSH_KEY" ]; then
-                                echo "SSH credential file is readable."
-                            else
-                                echo "ERROR: SSH credential file is not readable."
-                                exit 1
-                            fi
-
-                            echo "===== END AGENT DIAGNOSTICS ====="
-
-                            ACCOUNT_ID=$(aws sts get-caller-identity \
-                                --query Account --output text)
-
-                            ECR_REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
-                            ECR_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
-
-                            TARGET_GROUP_ARN=$(aws elbv2 describe-target-groups \
-                                --names "$TARGET_GROUP_NAME" \
-                                --region "$AWS_DEFAULT_REGION" \
-                                --query 'TargetGroups[0].TargetGroupArn' \
-                                --output text)
-
-                            if [ -z "$TARGET_GROUP_ARN" ] || \
-                               [ "$TARGET_GROUP_ARN" = "None" ]; then
-                                echo "ERROR: Target group not found."
-                                exit 1
-                            fi
-
-                            export AWS_DEFAULT_REGION
-                            export ASG_NAME
-                            export TARGET_GROUP_ARN
-                            export ECR_REGISTRY
-                            export ECR_IMAGE="$ECR_URI:$IMAGE_TAG"
-                            export SSH_USER
-                            export SSH_KEY
-
-                            chmod +x scripts/deploy.sh
-                            chmod +x scripts/rollback.sh
-
-                            echo "Starting rolling deployment..."
-
-                            bash ./scripts/deploy.sh
-                        '''
-                    }
                 }
             }
         }
@@ -186,15 +136,15 @@ pipeline {
 
     post {
         success {
-            echo "Rolling deployment completed. Image tag: ${BUILD_NUMBER}"
+            echo "Deployment successful. Image tag: ${BUILD_NUMBER}"
         }
 
         failure {
-            echo 'Pipeline failed. Check Jenkins Console Output and deployment logs.'
+            echo "Deployment failed. Check console output."
         }
 
         always {
-            echo 'Pipeline execution finished.'
+            echo "Pipeline execution completed."
         }
     }
 }
