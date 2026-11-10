@@ -19,6 +19,7 @@ CONTAINER="vm-docker-app"
 PORT=5000
 
 SSH_OPTS=(
+    -vvv
     -i "$SSH_KEY"
     -o BatchMode=yes
     -o ConnectTimeout=10
