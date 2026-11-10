@@ -74,12 +74,18 @@ resource "aws_launch_template" "app" {
 
     echo "Starting application bootstrap..."
 
-    # Install required packages
-    dnf install -y docker curl
+    # Install Docker and SSM Agent
+    dnf install -y docker amazon-ssm-agent
 
     # Start Docker
     systemctl enable docker
     systemctl start docker
+
+    # Start SSM Agent
+    systemctl enable amazon-ssm-agent
+    systemctl restart amazon-ssm-agent
+
+    systemctl is-active amazon-ssm-agent
 
     # Verify AWS CLI
     command -v aws

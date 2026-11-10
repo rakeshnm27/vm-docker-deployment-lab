@@ -110,6 +110,17 @@ resource "aws_iam_role_policy_attachment" "cloudwatch_logs" {
 
 
 # ============================================================
+# APPLICATION EC2 - SYSTEMS MANAGER PERMISSIONS
+# Enables secure administration through AWS SSM
+# ============================================================
+
+resource "aws_iam_role_policy_attachment" "app_ssm" {
+  role       = aws_iam_role.app_ec2.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+
+# ============================================================
 # APPLICATION EC2 INSTANCE PROFILE
 # Attaches the application IAM role to EC2 instances
 # ============================================================
