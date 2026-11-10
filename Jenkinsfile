@@ -21,7 +21,6 @@ pipeline {
     }
 
     stages {
-
         stage('Checkout') {
             steps {
                 checkout scm
@@ -39,8 +38,6 @@ pipeline {
                 ]) {
                     sh '''
                         set -e
-
-                        echo "Checking required tools..."
                         command -v docker
                         command -v aws
                         command -v ssh
@@ -63,10 +60,7 @@ pipeline {
             steps {
                 sh '''
                     set -e
-
-                    docker build \
-                        -t "$IMAGE_NAME:$IMAGE_TAG" .
-
+                    docker build -t "$IMAGE_NAME:$IMAGE_TAG" .
                     echo "Image built: $IMAGE_NAME:$IMAGE_TAG"
                 '''
             }
@@ -86,24 +80,16 @@ pipeline {
                         set +x
 
                         ACCOUNT_ID=$(aws sts get-caller-identity \
-                            --query Account \
-                            --output text)
+                            --query Account --output text)
 
                         ECR_REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
                         ECR_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
 
-                        echo "Authenticating with ECR..."
-
                         aws ecr get-login-password \
                             --region "$AWS_DEFAULT_REGION" |
-                            docker login \
-                                --username AWS \
-                                --password-stdin "$ECR_REGISTRY"
+                            docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-                        docker tag \
-                            "$IMAGE_NAME:$IMAGE_TAG" \
-                            "$ECR_URI:$IMAGE_TAG"
-
+                        docker tag "$IMAGE_NAME:$IMAGE_TAG" "$ECR_URI:$IMAGE_TAG"
                         docker push "$ECR_URI:$IMAGE_TAG"
 
                         echo "Successfully pushed $ECR_URI:$IMAGE_TAG"
@@ -132,8 +118,7 @@ pipeline {
                             set -e
 
                             ACCOUNT_ID=$(aws sts get-caller-identity \
-                                --query Account \
-                                --output text)
+                                --query Account --output text)
 
                             ECR_REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
                             ECR_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
@@ -162,7 +147,9 @@ pipeline {
                             chmod +x scripts/rollback.sh
 
                             echo "Starting rolling deployment..."
-                            ./scripts/deploy.sh
+
+                            # Explicitly execute the deployment script with Bash.
+                            bash ./scripts/deploy.sh
                         '''
                     }
                 }
