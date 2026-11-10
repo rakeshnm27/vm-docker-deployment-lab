@@ -31,8 +31,11 @@ pipeline {
         stage('Validate Tools and AWS Access') {
             steps {
                 withCredentials([
-                    [$class: 'AmazonWebServicesCredentialsBinding',
-                     credentialsId: 'aws-ecr-credentials']
+                    usernamePassword(
+                        credentialsId: 'aws-ecr-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
                 ]) {
                     sh '''
                         set -e
@@ -72,8 +75,11 @@ pipeline {
         stage('Push Image to ECR') {
             steps {
                 withCredentials([
-                    [$class: 'AmazonWebServicesCredentialsBinding',
-                     credentialsId: 'aws-ecr-credentials']
+                    usernamePassword(
+                        credentialsId: 'aws-ecr-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
                 ]) {
                     sh '''
                         set -e
@@ -109,8 +115,11 @@ pipeline {
         stage('Rolling Deployment to ASG') {
             steps {
                 withCredentials([
-                    [$class: 'AmazonWebServicesCredentialsBinding',
-                     credentialsId: 'aws-ecr-credentials']
+                    usernamePassword(
+                        credentialsId: 'aws-ecr-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
                 ]) {
                     withCredentials([
                         sshUserPrivateKey(
