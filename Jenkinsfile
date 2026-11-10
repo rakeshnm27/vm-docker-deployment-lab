@@ -10,6 +10,15 @@ pipeline {
 
     environment {
         AWS_DEFAULT_REGION = 'ap-south-1'
+        AWS_REGION = 'ap-south-1'
+
+        // Use the EC2 instance profile for AWS authentication.
+        AWS_EC2_METADATA_DISABLED = 'false'
+
+        // Bypass proxies when accessing EC2 instance metadata.
+        NO_PROXY = '169.254.169.254,localhost,127.0.0.1'
+        no_proxy = '169.254.169.254,localhost,127.0.0.1'
+
         ECR_REPOSITORY = 'vm-docker-deployment-lab'
         ASG_NAME = 'vm-docker-lab-asg'
         TARGET_GROUP_NAME = 'vm-docker-lab-tg'
@@ -43,6 +52,8 @@ pipeline {
                     aws ecr describe-repositories \
                         --repository-names "$ECR_REPOSITORY" \
                         --region "$AWS_DEFAULT_REGION"
+
+                    echo "AWS validation successful."
                 '''
             }
         }
@@ -156,3 +167,4 @@ pipeline {
         }
     }
 }
+
