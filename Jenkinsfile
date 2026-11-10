@@ -21,6 +21,7 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout') {
             steps {
                 checkout scm
@@ -38,6 +39,7 @@ pipeline {
                 ]) {
                     sh '''
                         set -e
+
                         command -v docker
                         command -v aws
                         command -v ssh
@@ -60,7 +62,9 @@ pipeline {
             steps {
                 sh '''
                     set -e
+
                     docker build -t "$IMAGE_NAME:$IMAGE_TAG" .
+
                     echo "Image built: $IMAGE_NAME:$IMAGE_TAG"
                 '''
             }
@@ -87,9 +91,12 @@ pipeline {
 
                         aws ecr get-login-password \
                             --region "$AWS_DEFAULT_REGION" |
-                            docker login --username AWS --password-stdin "$ECR_REGISTRY"
+                            docker login \
+                                --username AWS \
+                                --password-stdin "$ECR_REGISTRY"
 
                         docker tag "$IMAGE_NAME:$IMAGE_TAG" "$ECR_URI:$IMAGE_TAG"
+
                         docker push "$ECR_URI:$IMAGE_TAG"
 
                         echo "Successfully pushed $ECR_URI:$IMAGE_TAG"
@@ -116,6 +123,27 @@ pipeline {
                     ]) {
                         sh '''
                             set -e
+
+                            echo "===== DEPLOYMENT AGENT DIAGNOSTICS ====="
+
+                            echo "Hostname:"
+                            hostname
+
+                            echo "Private IP addresses:"
+                            hostname -I
+
+                            echo "Jenkins execution user:"
+                            whoami
+
+                            echo "SSH key file availability:"
+                            if [ -r "$SSH_KEY" ]; then
+                                echo "SSH credential file is readable."
+                            else
+                                echo "ERROR: SSH credential file is not readable."
+                                exit 1
+                            fi
+
+                            echo "===== END AGENT DIAGNOSTICS ====="
 
                             ACCOUNT_ID=$(aws sts get-caller-identity \
                                 --query Account --output text)
@@ -148,7 +176,6 @@ pipeline {
 
                             echo "Starting rolling deployment..."
 
-                            # Explicitly execute the deployment script with Bash.
                             bash ./scripts/deploy.sh
                         '''
                     }
