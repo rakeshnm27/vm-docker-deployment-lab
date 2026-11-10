@@ -12,13 +12,6 @@ pipeline {
         AWS_DEFAULT_REGION = 'ap-south-1'
         AWS_REGION = 'ap-south-1'
 
-        // Use the EC2 instance profile for AWS authentication.
-        AWS_EC2_METADATA_DISABLED = 'false'
-
-        // Bypass proxies when accessing EC2 instance metadata.
-        NO_PROXY = '169.254.169.254,localhost,127.0.0.1'
-        no_proxy = '169.254.169.254,localhost,127.0.0.1'
-
         ECR_REPOSITORY = 'vm-docker-deployment-lab'
         ASG_NAME = 'vm-docker-lab-asg'
         TARGET_GROUP_NAME = 'vm-docker-lab-tg'
@@ -37,24 +30,29 @@ pipeline {
 
         stage('Validate Tools and AWS Access') {
             steps {
-                sh '''
-                    set -e
+                withCredentials([
+                    [$class: 'AmazonWebServicesCredentialsBinding',
+                     credentialsId: 'aws-ecr-credentials']
+                ]) {
+                    sh '''
+                        set -e
 
-                    echo "Checking required tools..."
-                    command -v docker
-                    command -v aws
-                    command -v ssh
+                        echo "Checking required tools..."
+                        command -v docker
+                        command -v aws
+                        command -v ssh
 
-                    echo "Checking AWS identity..."
-                    aws sts get-caller-identity
+                        echo "Checking AWS identity..."
+                        aws sts get-caller-identity
 
-                    echo "Checking ECR repository..."
-                    aws ecr describe-repositories \
-                        --repository-names "$ECR_REPOSITORY" \
-                        --region "$AWS_DEFAULT_REGION"
+                        echo "Checking ECR repository..."
+                        aws ecr describe-repositories \
+                            --repository-names "$ECR_REPOSITORY" \
+                            --region "$AWS_DEFAULT_REGION"
 
-                    echo "AWS validation successful."
-                '''
+                        echo "AWS validation successful."
+                    '''
+                }
             }
         }
 
@@ -73,47 +71,13 @@ pipeline {
 
         stage('Push Image to ECR') {
             steps {
-                sh '''
-                    set -e
-                    set +x
-
-                    ACCOUNT_ID=$(aws sts get-caller-identity \
-                        --query Account \
-                        --output text)
-
-                    ECR_REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
-                    ECR_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
-
-                    echo "Authenticating with ECR..."
-
-                    aws ecr get-login-password \
-                        --region "$AWS_DEFAULT_REGION" |
-                        docker login \
-                            --username AWS \
-                            --password-stdin "$ECR_REGISTRY"
-
-                    docker tag \
-                        "$IMAGE_NAME:$IMAGE_TAG" \
-                        "$ECR_URI:$IMAGE_TAG"
-
-                    docker push "$ECR_URI:$IMAGE_TAG"
-
-                    echo "Successfully pushed $ECR_URI:$IMAGE_TAG"
-                '''
-            }
-        }
-
-        stage('Rolling Deployment to ASG') {
-            steps {
                 withCredentials([
-                    sshUserPrivateKey(
-                        credentialsId: 'aws-ec2-ssh',
-                        keyFileVariable: 'SSH_KEY',
-                        usernameVariable: 'SSH_USER'
-                    )
+                    [$class: 'AmazonWebServicesCredentialsBinding',
+                     credentialsId: 'aws-ecr-credentials']
                 ]) {
                     sh '''
                         set -e
+                        set +x
 
                         ACCOUNT_ID=$(aws sts get-caller-identity \
                             --query Account \
@@ -122,32 +86,76 @@ pipeline {
                         ECR_REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
                         ECR_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
 
-                        TARGET_GROUP_ARN=$(aws elbv2 describe-target-groups \
-                            --names "$TARGET_GROUP_NAME" \
-                            --region "$AWS_DEFAULT_REGION" \
-                            --query 'TargetGroups[0].TargetGroupArn' \
-                            --output text)
+                        echo "Authenticating with ECR..."
 
-                        if [ -z "$TARGET_GROUP_ARN" ] || \
-                           [ "$TARGET_GROUP_ARN" = "None" ]; then
-                            echo "ERROR: Target group not found."
-                            exit 1
-                        fi
+                        aws ecr get-login-password \
+                            --region "$AWS_DEFAULT_REGION" |
+                            docker login \
+                                --username AWS \
+                                --password-stdin "$ECR_REGISTRY"
 
-                        export AWS_DEFAULT_REGION
-                        export ASG_NAME
-                        export TARGET_GROUP_ARN
-                        export ECR_REGISTRY
-                        export ECR_IMAGE="$ECR_URI:$IMAGE_TAG"
-                        export SSH_USER
-                        export SSH_KEY
+                        docker tag \
+                            "$IMAGE_NAME:$IMAGE_TAG" \
+                            "$ECR_URI:$IMAGE_TAG"
 
-                        chmod +x scripts/deploy.sh
-                        chmod +x scripts/rollback.sh
+                        docker push "$ECR_URI:$IMAGE_TAG"
 
-                        echo "Starting rolling deployment..."
-                        ./scripts/deploy.sh
+                        echo "Successfully pushed $ECR_URI:$IMAGE_TAG"
                     '''
+                }
+            }
+        }
+
+        stage('Rolling Deployment to ASG') {
+            steps {
+                withCredentials([
+                    [$class: 'AmazonWebServicesCredentialsBinding',
+                     credentialsId: 'aws-ecr-credentials']
+                ]) {
+                    withCredentials([
+                        sshUserPrivateKey(
+                            credentialsId: 'aws-ec2-ssh',
+                            keyFileVariable: 'SSH_KEY',
+                            usernameVariable: 'SSH_USER'
+                        )
+                    ]) {
+                        sh '''
+                            set -e
+
+                            ACCOUNT_ID=$(aws sts get-caller-identity \
+                                --query Account \
+                                --output text)
+
+                            ECR_REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+                            ECR_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
+
+                            TARGET_GROUP_ARN=$(aws elbv2 describe-target-groups \
+                                --names "$TARGET_GROUP_NAME" \
+                                --region "$AWS_DEFAULT_REGION" \
+                                --query 'TargetGroups[0].TargetGroupArn' \
+                                --output text)
+
+                            if [ -z "$TARGET_GROUP_ARN" ] || \
+                               [ "$TARGET_GROUP_ARN" = "None" ]; then
+                                echo "ERROR: Target group not found."
+                                exit 1
+                            fi
+
+                            export AWS_DEFAULT_REGION
+                            export ASG_NAME
+                            export TARGET_GROUP_ARN
+                            export ECR_REGISTRY
+                            export ECR_IMAGE="$ECR_URI:$IMAGE_TAG"
+                            export SSH_USER
+                            export SSH_KEY
+
+                            chmod +x scripts/deploy.sh
+                            chmod +x scripts/rollback.sh
+
+                            echo "Starting rolling deployment..."
+                            ./scripts/deploy.sh
+                        '''
+                    }
                 }
             }
         }
